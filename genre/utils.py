@@ -9,6 +9,7 @@ import re
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from urllib.parse import unquote
+import torch
 
 from bs4 import BeautifulSoup
 
@@ -126,7 +127,10 @@ def get_entity_spans_post_processing(sentences):
 
 
 def _get_entity_spans(
-    model, input_sentences, prefix_allowed_tokens_fn, redirections=None,
+    model,
+    input_sentences,
+    prefix_allowed_tokens_fn,
+    redirections=None,
 ):
     output_sentences = model.sample(
         get_entity_spans_pre_processing(input_sentences),
@@ -187,7 +191,6 @@ def get_entity_spans_hf(
 
 
 def get_entity_spans_finalize(input_sentences, output_sentences, redirections=None):
-
     return_outputs = []
     for input_, output_ in zip(input_sentences, output_sentences):
         input_ = input_.replace("\xa0", " ") + "  -"
@@ -198,7 +201,6 @@ def get_entity_spans_finalize(input_sentences, output_sentences, redirections=No
         i = 0
         j = 0
         while j < len(output_) and i < len(input_):
-
             if status == "o":
                 if input_[i] == output_[j] or (
                     output_[j] in "()" and input_[i] in "[]{}"
@@ -448,7 +450,6 @@ def search_simple(anchor, lang, lang_title2wikidataID):
 
 
 def search_wikipedia(title, lang, lang_title2wikidataID, lang_redirect2title):
-
     max_redirects = 10
     while (lang, title) in lang_redirect2title and max_redirects > 0:
         title = lang_redirect2title[(lang, title)]
@@ -465,7 +466,11 @@ def search_wikidata(query, label_alias2wikidataID):
 
 
 def get_wikidata_ids(
-    anchor, lang, lang_title2wikidataID, lang_redirect2title, label_or_alias2wikidataID,
+    anchor,
+    lang,
+    lang_title2wikidataID,
+    lang_redirect2title,
+    label_or_alias2wikidataID,
 ):
     success, result = search_simple(anchor, lang, label_or_alias2wikidataID)
     if success:
@@ -480,8 +485,14 @@ def get_wikidata_ids(
             return search_wikidata(result, label_or_alias2wikidataID), "wikidata"
 
 
-def post_process_wikidata(outputs, text_to_id=False, marginalize=False):
-
+# Edited file as per https://github.com/facebookresearch/GENRE/issues/95
+def post_process_wikidata(
+    outputs,
+    text_to_id=False,
+    marginalize=False,
+    batched_hypos=None,
+    marginalize_lenpen=0.5,
+):
     if text_to_id:
         outputs = [
             [{**hypo, "id": text_to_id(hypo["text"])} for hypo in hypos]

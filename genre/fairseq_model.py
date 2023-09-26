@@ -50,8 +50,13 @@ class _GENREHubInterface:
             for hypos in batched_hypos
         ]
 
+        # Edited as per https://github.com/facebookresearch/GENRE/issues/95
         outputs = post_process_wikidata(
-            outputs, text_to_id=text_to_id, marginalize=marginalize
+            outputs,
+            text_to_id=text_to_id,
+            marginalize=marginalize,
+            batched_hypos=batched_hypos,
+            marginalize_lenpen=marginalize_lenpen,
         )
 
         return outputs
@@ -71,11 +76,14 @@ class _GENREHubInterface:
         else:
             return tokens
 
+
 class GENREHubInterface(_GENREHubInterface, BARTHubInterface):
     pass
-    
+
+
 class mGENREHubInterface(_GENREHubInterface, BARTHubInterface):
     pass
+
 
 class GENRE(BARTModel):
     @classmethod
@@ -99,6 +107,7 @@ class GENRE(BARTModel):
             **kwargs,
         )
         return GENREHubInterface(x["args"], x["task"], x["models"][0])
+
 
 class mGENRE(BARTModel):
     @classmethod
