@@ -85,7 +85,6 @@ def _get_end_to_end_prefix_allowed_tokens_fn(
     candidates_trie: Trie = None,
     mention_to_candidates_dict: Dict[str, List[str]] = None,
 ):
-
     assert not (
         candidates_trie is not None and mention_to_candidates_dict is not None
     ), "`candidates_trie` and `mention_to_candidates_dict` cannot be both != `None`"
@@ -114,7 +113,11 @@ def _get_end_to_end_prefix_allowed_tokens_fn(
             [
                 i
                 for i in range(vocabulary_length)
-                if i not in (bos_token_id, pad_token_id,)
+                if i
+                not in (
+                    bos_token_id,
+                    pad_token_id,
+                )
             ]
         )
 
@@ -123,7 +126,11 @@ def _get_end_to_end_prefix_allowed_tokens_fn(
             [
                 i
                 for i in range(vocabulary_length)
-                if i not in (bos_token_id, pad_token_id,)
+                if i
+                not in (
+                    bos_token_id,
+                    pad_token_id,
+                )
             ],
             codes,
         )
@@ -131,7 +138,6 @@ def _get_end_to_end_prefix_allowed_tokens_fn(
     sent_origs = [[codes["EOS"]] + encode_fn(sent)[1:] for sent in sentences]
 
     def prefix_allowed_tokens_fn(batch_id, sent):
-
         sent = sent.tolist()
         status = get_status(sent)
         sent_orig = sent_origs[batch_id]
@@ -204,7 +210,6 @@ def _get_end_to_end_prefix_allowed_tokens_fn(
         return j if j != len(sent_orig) else None
 
     def get_trie_mention(sent, sent_orig):
-
         pointer_start, _ = get_pointer_mention(sent)
         if pointer_start + 1 < len(sent):
             ment_next = mention_trie.get(sent[pointer_start + 1 :])
