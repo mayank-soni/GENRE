@@ -5,14 +5,21 @@
 ####################
 
 # Generic
-
+import argparse
+import json
+import pickle
 
 # Libs
-
+import evaluate
 
 # Custom
-from GENRE.genre.fairseq_model import mGENREHubInterface
+from GENRE.genre.fairseq_model import mGENRE, mGENREHubInterface
 from GENRE.genre.trie import MarisaTrie
+from src.damuel.entity_linking_dataset import (
+    extract_single_data_line,
+    batch_generator_for_iterables,
+    extract_single_mention_mgenre_format,
+)
 
 ##################
 # Configurations #
@@ -65,6 +72,10 @@ def inference_with_mgenre(
     )
 
 
+def get_top_qids(mgenre_output: list[list[dict]]) -> list[str]:
+    return [sentence[0]["id"] for sentence in mgenre_output]
+
+
 ###########
 # Classes #
 ###########
@@ -112,3 +123,81 @@ def inference_with_mgenre(
 ##########
 # Script #
 ##########
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Runs DaMuEL dataset through mGENRE. Saves the output to a file. Calculates top-1 accuracy."
+    )
+    parser.add_argument(
+        "--dataset_path",
+        type=str,
+        required=True,
+        help="Path to DaMuEL dataset",
+    )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        required=True,
+        help="Path to mGENRE model",
+    )
+    parser.add_argument(
+        "--knowledge_base_path",
+        type=str,
+        required=True,
+        help="Path to knowledge base",
+    )
+    parser.add_argument(
+        "--candidate_marisa_trie_path",
+        type=str,
+        required=True,
+        help="Path to candidate entities Marisa trie",
+    )
+    parser.add_argument(
+        "--output_path",
+        type=str,
+        required=True,
+        help="Path to output file",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        required=True,
+        help="Batch size",
+    )
+    args = parser.parse_args()
+    model = mGENRE.from_pretrained(args.model_path).eval()
+    with open(args.knowledge_base_path, "rb") as file:
+        knowledge_base = pickle.load(file)
+    with open(args.candidate_marisa_trie_path, "rb") as file:
+        candidate_trie = pickle.load(file)
+    metric = evaluate.load("accuracy")
+    with open(args.output_path, "w") as file:
+        for (
+            mention_ids,
+            input_sentences,
+            gold_output_qids,
+        ) in batch_generator_for_iterables(
+            batch_size=args.batch_size,
+            data=extract_single_mention_mgenre_format(
+                extract_single_data_line(args.dataset_path)
+            ),
+        ):
+            output = inference_with_mgenre(
+                sentences=input_sentences,
+                model=model,
+                knowledge_base=knowledge_base,
+                candidate_trie=candidate_trie,
+            )
+            for mention_id, input_sentence, output_result in zip(
+                mention_ids, input_sentences, output
+            ):
+                json_to_write = {
+                    "mention_id": mention_id,
+                    "input_sentence": input_sentence,
+                    "output_result": output_result,
+                }
+                file.write(json.dumps(json_to_write) + "\n")
+            metric.add_batch(
+                references=gold_output_qids, predictions=get_top_qids(output)
+            )
+    print(metric.compute())
