@@ -6,11 +6,14 @@
 
 # Generic
 import argparse
+from collections.abc import Generator
 import json
+import logging
 import pickle
 
 # Libs
 import evaluate
+from tqdm import tqdm
 
 # Custom
 from GENRE.genre.fairseq_model import mGENRE, mGENREHubInterface
@@ -71,10 +74,14 @@ def inference_with_mgenre(
         marginalize=True,
     )
 
+def get_json_serialisable_mgenre_output(mgenre_output: list[list[dict]]) -> list[list[dict]]:
+    return [[{'id': result['id'], 'texts': result['texts']} for result in sentence] for sentence in mgenre_output]
 
 def get_top_qids(mgenre_output: list[list[dict]]) -> list[str]:
     return [sentence[0]["id"] for sentence in mgenre_output]
 
+def get_length_of_generator(generator: Generator) -> int:
+    return sum(1 for value in generator)
 
 ###########
 # Classes #
@@ -170,34 +177,53 @@ if __name__ == "__main__":
         knowledge_base = pickle.load(file)
     with open(args.candidate_marisa_trie_path, "rb") as file:
         candidate_trie = pickle.load(file)
-    metric = evaluate.load("accuracy")
+    total_number_of_examples = 0
+    number_of_correctly_predicted_examples = 0
     with open(args.output_path, "w") as file:
+        index = 0
+        data_iterator=batch_generator_for_iterables(
+            batch_size=args.batch_size,
+            data=extract_single_mention_mgenre_format(
+                extract_single_data_line(args.dataset_path), share_to_return = 0.001
+            )
+        )
+        logging.info('Getting generator length')
+        length_of_iterator = get_length_of_generator(data_iterator)
+        logging.info('Running evaluation')
+        data_iterator=batch_generator_for_iterables(
+            batch_size=args.batch_size,
+            data=extract_single_mention_mgenre_format(
+                extract_single_data_line(args.dataset_path), share_to_return = 0.001
+            )
+        )
         for (
             mention_ids,
             input_sentences,
             gold_output_qids,
-        ) in batch_generator_for_iterables(
-            batch_size=args.batch_size,
-            data=extract_single_mention_mgenre_format(
-                extract_single_data_line(args.dataset_path)
-            ),
-        ):
+        ) in tqdm(data_iterator, total = length_of_iterator):
             output = inference_with_mgenre(
                 sentences=input_sentences,
                 model=model,
                 knowledge_base=knowledge_base,
                 candidate_trie=candidate_trie,
             )
-            for mention_id, input_sentence, output_result in zip(
-                mention_ids, input_sentences, output
+            if index >= 3:
+                break
+            for mention_id, input_sentence, output_result, gold_output in zip(
+                mention_ids, input_sentences, get_json_serialisable_mgenre_output(output), gold_output_qids
             ):
+                is_correct = False
+                total_number_of_examples += 1
+                if output_result[0]['id'] == gold_output:
+                    is_correct = True
+                    number_of_correctly_predicted_examples += 1
                 json_to_write = {
                     "mention_id": mention_id,
                     "input_sentence": input_sentence,
                     "output_result": output_result,
+                    "gold_output": gold_output,
+                    "is_correct": is_correct
                 }
                 file.write(json.dumps(json_to_write) + "\n")
-            metric.add_batch(
-                references=gold_output_qids, predictions=get_top_qids(output)
-            )
-    print(metric.compute())
+            index += 1
+    print(f"({number_of_correctly_predicted_examples=}) / ({total_number_of_examples=}) = {number_of_correctly_predicted_examples/total_number_of_examples}")
