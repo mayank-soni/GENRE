@@ -18,7 +18,7 @@ from tqdm import tqdm
 # Custom
 from GENRE.genre.fairseq_model import mGENRE, mGENREHubInterface
 from GENRE.genre.trie import MarisaTrie
-from src.damuel.entity_linking_dataset import (
+from src.damuel.process_entity_linking_data import (
     extract_single_data_line,
     batch_generator_for_iterables,
     extract_single_mention_mgenre_format,
@@ -74,14 +74,23 @@ def inference_with_mgenre(
         marginalize=True,
     )
 
-def get_json_serialisable_mgenre_output(mgenre_output: list[list[dict]]) -> list[list[dict]]:
-    return [[{'id': result['id'], 'texts': result['texts']} for result in sentence] for sentence in mgenre_output]
+
+def get_json_serialisable_mgenre_output(
+    mgenre_output: list[list[dict]],
+) -> list[list[dict]]:
+    return [
+        [{"id": result["id"], "texts": result["texts"]} for result in sentence]
+        for sentence in mgenre_output
+    ]
+
 
 def get_top_qids(mgenre_output: list[list[dict]]) -> list[str]:
     return [sentence[0]["id"] for sentence in mgenre_output]
 
+
 def get_length_of_generator(generator: Generator) -> int:
     return sum(1 for value in generator)
+
 
 ###########
 # Classes #
@@ -181,26 +190,26 @@ if __name__ == "__main__":
     number_of_correctly_predicted_examples = 0
     with open(args.output_path, "w") as file:
         index = 0
-        data_iterator=batch_generator_for_iterables(
+        data_iterator = batch_generator_for_iterables(
             batch_size=args.batch_size,
             data=extract_single_mention_mgenre_format(
-                extract_single_data_line(args.dataset_path), share_to_return = 0.001
-            )
+                extract_single_data_line(args.dataset_path), share_to_return=0.001
+            ),
         )
-        logging.info('Getting generator length')
+        logging.info("Getting generator length")
         length_of_iterator = get_length_of_generator(data_iterator)
-        logging.info('Running evaluation')
-        data_iterator=batch_generator_for_iterables(
+        logging.info("Running evaluation")
+        data_iterator = batch_generator_for_iterables(
             batch_size=args.batch_size,
             data=extract_single_mention_mgenre_format(
-                extract_single_data_line(args.dataset_path), share_to_return = 0.001
-            )
+                extract_single_data_line(args.dataset_path), share_to_return=0.001
+            ),
         )
         for (
             mention_ids,
             input_sentences,
             gold_output_qids,
-        ) in tqdm(data_iterator, total = length_of_iterator):
+        ) in tqdm(data_iterator, total=length_of_iterator):
             output = inference_with_mgenre(
                 sentences=input_sentences,
                 model=model,
@@ -210,11 +219,14 @@ if __name__ == "__main__":
             if index >= 3:
                 break
             for mention_id, input_sentence, output_result, gold_output in zip(
-                mention_ids, input_sentences, get_json_serialisable_mgenre_output(output), gold_output_qids
+                mention_ids,
+                input_sentences,
+                get_json_serialisable_mgenre_output(output),
+                gold_output_qids,
             ):
                 is_correct = False
                 total_number_of_examples += 1
-                if output_result[0]['id'] == gold_output:
+                if output_result[0]["id"] == gold_output:
                     is_correct = True
                     number_of_correctly_predicted_examples += 1
                 json_to_write = {
@@ -222,8 +234,10 @@ if __name__ == "__main__":
                     "input_sentence": input_sentence,
                     "output_result": output_result,
                     "gold_output": gold_output,
-                    "is_correct": is_correct
+                    "is_correct": is_correct,
                 }
                 file.write(json.dumps(json_to_write) + "\n")
             index += 1
-    print(f"({number_of_correctly_predicted_examples=}) / ({total_number_of_examples=}) = {number_of_correctly_predicted_examples/total_number_of_examples}")
+    print(
+        f"({number_of_correctly_predicted_examples=}) / ({total_number_of_examples=}) = {number_of_correctly_predicted_examples/total_number_of_examples}"
+    )
