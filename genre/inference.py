@@ -10,19 +10,16 @@ from collections.abc import Generator
 import json
 import logging
 import pickle
+import random
 
 # Libs
-import evaluate
 from tqdm import tqdm
 
 # Custom
 from GENRE.genre.fairseq_model import mGENRE, mGENREHubInterface
 from GENRE.genre.trie import MarisaTrie
-from src.damuel.process_entity_linking_data import (
-    extract_single_data_line,
-    batch_generator_for_iterables,
-    extract_single_mention_mgenre_format,
-)
+from damuel.process_entity_linking_data import generate_mgenre_batches
+from damuel.utils import get_length_of_generator
 
 ##################
 # Configurations #
@@ -86,10 +83,6 @@ def get_json_serialisable_mgenre_output(
 
 def get_top_qids(mgenre_output: list[list[dict]]) -> list[str]:
     return [sentence[0]["id"] for sentence in mgenre_output]
-
-
-def get_length_of_generator(generator: Generator) -> int:
-    return sum(1 for value in generator)
 
 
 ###########
@@ -190,20 +183,24 @@ if __name__ == "__main__":
     number_of_correctly_predicted_examples = 0
     with open(args.output_path, "w") as file:
         index = 0
-        data_iterator = batch_generator_for_iterables(
+        random.seed(36)
+        data_iterator = generate_mgenre_batches(
             batch_size=args.batch_size,
-            data=extract_single_mention_mgenre_format(
-                extract_single_data_line(args.dataset_path), share_to_return=0.001
-            ),
+            dataset_path=args.dataset_path,
+            break_after=None,
+            min_sentence_length=args.min_sentence_length,
+            share_to_return=args.share_to_return,
         )
         logging.info("Getting generator length")
         length_of_iterator = get_length_of_generator(data_iterator)
         logging.info("Running evaluation")
-        data_iterator = batch_generator_for_iterables(
+        random.seed(36)
+        data_iterator = generate_mgenre_batches(
             batch_size=args.batch_size,
-            data=extract_single_mention_mgenre_format(
-                extract_single_data_line(args.dataset_path), share_to_return=0.001
-            ),
+            dataset_path=args.dataset_path,
+            break_after=None,
+            min_sentence_length=args.min_sentence_length,
+            share_to_return=args.share_to_return,
         )
         for (
             mention_ids,
