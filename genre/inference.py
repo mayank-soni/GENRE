@@ -9,7 +9,6 @@ import argparse
 import json
 import logging
 import pathlib
-import pickle
 import random
 
 # Libs
@@ -17,7 +16,6 @@ from tqdm import tqdm
 
 # Custom
 from config import (
-    DAMUEL_WIKIPEDIA_FOLDER,
     ENTITY_LINKING_DATASET_PATH,
     MGENRE_KNOWLEDGE_BASE_PATH,
     MGENRE_MARISA_TRIE_PATH,
@@ -72,7 +70,7 @@ def inference_with_mgenre(
                     ]
                     
     Raises:
-        KeyError: If model.sample raises KeyError.
+        KeyError: If model.sample() raises KeyError.
             This has happened in our experience when the prefix trie contains <unk> tokens which are not found in the knowledge base,
             which happens when the model's tokeniser is unable to encode some page titles. 
             The prefix trie creation code has since been updated to prevent this. However, the error handling code has been left in here. 
@@ -126,6 +124,20 @@ def inference_with_mgenre(
 def get_json_serialisable_mgenre_output(
     mgenre_output: list[list[dict]],
 ) -> list[list[dict]]:
+    """Returns a JSON serialisable version of the mGENRE output i.e. dropping score tensors.
+    
+    Args:
+        mgenre_output (list[list[dict]]): mGENRE output from model.sample() with text_to_id and marginalize set to True.
+    
+    Returns:
+        list[list[dict]]: JSON serialisable version of mGENRE output.
+            Format: [[{ 'id': QID,
+                        'texts': [f'{page title} >> {language}'],
+                      },
+                      {option 2},...
+                     ], Results for sentence 2, ...
+                    ]
+    """
     return [
         [{"id": result["id"], "texts": result["texts"]} for result in sentence]
         for sentence in mgenre_output
@@ -133,6 +145,14 @@ def get_json_serialisable_mgenre_output(
 
 
 def get_top_qids(mgenre_output: list[list[dict]]) -> list[str]:
+    """Returns the top QIDs for each sentence in the mGENRE output.
+    
+    Args:
+        mgenre_output (list[list[dict]]): mGENRE output from model.sample() with text_to_id and marginalize set to True.
+        
+    Returns:
+        list[str]: List of top QIDs for each sentence.
+    """
     return [sentence[0]["id"] for sentence in mgenre_output]
 
 
@@ -223,6 +243,17 @@ if __name__ == "__main__":
         type=int,
         required=True,
         help="Batch size",
+    )
+    full_el_args = parser.add_argument_group("Full entity linking dataset arguments")
+    full_el_args.add_argument(
+        "--min_sentence_length",
+        help="Minimum sentence length for data extracted from full entity linking dataset",
+        type=int,
+    )
+    full_el_args.add_argument(
+        "--share_to_return",
+        help="Share of data to be extracted from full entity linking dataset",
+        type=float,
     )
     args = parser.parse_args()
     logging.basicConfig(
