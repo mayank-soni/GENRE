@@ -8,6 +8,7 @@
 import argparse
 import json
 import logging
+import pathlib
 import pickle
 import random
 
@@ -15,8 +16,22 @@ import random
 from tqdm import tqdm
 
 # Custom
-from damuel.process_entity_linking_data import extract_single_mention_mgenre_format
-from damuel.utils import batch_generator_for_iterables, get_length_of_generator
+from config import (
+    DAMUEL_WIKIPEDIA_FOLDER,
+    ENTITY_LINKING_DATASET_PATH,
+    MGENRE_KNOWLEDGE_BASE_PATH,
+    MGENRE_MARISA_TRIE_PATH,
+    MGENRE_MODEL_PATH,
+    SPACY_TRAIN_SET_PATH,
+)
+from damuel.process_entity_linking_data import (
+    extract_single_mention_mgenre_format,
+    extract_single_mention_mgenre_format_from_spacy_dataset,
+)
+from damuel.utils import (
+    batch_generator_for_iterables,
+    load_from_pickle,
+)
 from GENRE.genre.fairseq_model import mGENRE, mGENREHubInterface
 from GENRE.genre.trie import MarisaTrie
 
@@ -143,6 +158,11 @@ if __name__ == "__main__":
         help="Path to DaMuEL dataset",
     )
     parser.add_argument(
+        "--spacy-format_dataset",
+        action="store_true",
+        help="Whether the dataset is in spacy format",
+    )
+    parser.add_argument(
         "--model_path",
         type=str,
         required=True,
@@ -173,62 +193,85 @@ if __name__ == "__main__":
         help="Batch size",
     )
     args = parser.parse_args()
-    model = mGENRE.from_pretrained(args.model_path).eval()
-    with open(args.knowledge_base_path, "rb") as file:
-        knowledge_base = pickle.load(file)
-    with open(args.candidate_marisa_trie_path, "rb") as file:
-        candidate_trie = pickle.load(file)
+    knowledge_base_path = (
+        pathlib.Path(args.knowledge_base_path)
+        if args.knowledge_base_path
+        else MGENRE_KNOWLEDGE_BASE_PATH
+    )
+    if args.dataset_path:
+        dataset_path = pathlib.Path(args.dataset_path)
+    elif args.spacy_format_dataset:
+        dataset_path = SPACY_TRAIN_SET_PATH
+    else:
+        dataset_path = ENTITY_LINKING_DATASET_PATH
+    model_path = pathlib.Path(args.model_path) if args.model_path else MGENRE_MODEL_PATH
+    candidate_trie_path = (
+        pathlib.Path(args.candidate_marisa_trie_path)
+        if args.candidate_marisa_trie_path
+        else MGENRE_MARISA_TRIE_PATH
+    )
+    if args.output_path:
+        output_path = pathlib.Path(args.output_path)
+    else:
+        if args.spacy_format_dataset:
+            output_path = (
+                SPACY_TRAIN_SET_PATH.parent / "mgenre_output_spacy_dataset.jsonl"
+            )
+        else:
+            output_path = (
+                ENTITY_LINKING_DATASET_PATH.parent / "mgenre_output_full_dataset.jsonl"
+            )
+    model = mGENRE.from_pretrained(model_path).eval()
+    knowledge_base = load_from_pickle(knowledge_base_path)
+    candidate_trie = load_from_pickle(candidate_trie_path)
     total_number_of_examples = 0
     number_of_correctly_predicted_examples = 0
-    with open(args.output_path, "w") as file:
+    if args.spacy_format_dataset:
+        data_iterator = batch_generator_for_iterables(
+            args.batch_size,
+            extract_single_mention_mgenre_format_from_spacy_dataset(
+                dataset_path=dataset_path
+            ),
+        )
+    else:
+        random.seed(36)
+        data_iterator = batch_generator_for_iterables(
+            args.batch_size,
+            extract_single_mention_mgenre_format(
+                dataset_path=dataset_path,
+                break_after=None,
+                min_sentence_length=args.min_sentence_length,
+                share_to_return=args.share_to_return,
+            ),
+        )
+
+    with open(output_path, "w") as file:
         index = 0
-        random.seed(36)
-        data_iterator = batch_generator_for_iterables(
-            args.batch_size,
-            extract_single_mention_mgenre_format(
-                dataset_path=args.dataset_path,
-                break_after=None,
-                min_sentence_length=args.min_sentence_length,
-                share_to_return=args.share_to_return,
-            ),
-        )
-        logging.info("Getting generator length")
-        length_of_iterator = get_length_of_generator(data_iterator)
         logging.info("Running evaluation")
-        random.seed(36)
-        data_iterator = batch_generator_for_iterables(
-            args.batch_size,
-            extract_single_mention_mgenre_format(
-                dataset_path=args.dataset_path,
-                break_after=None,
-                min_sentence_length=args.min_sentence_length,
-                share_to_return=args.share_to_return,
-            ),
-        )
         for (
             mention_ids,
             input_sentences,
             gold_output_qids,
-        ) in tqdm(data_iterator, total=length_of_iterator):
+        ) in tqdm(data_iterator):
             output = inference_with_mgenre(
                 sentences=input_sentences,
                 model=model,
                 knowledge_base=knowledge_base,
                 candidate_trie=candidate_trie,
             )
-            if index >= 3:
-                break
+            # Compare the top QID with the gold QID
             for mention_id, input_sentence, output_result, gold_output in zip(
                 mention_ids,
                 input_sentences,
                 get_json_serialisable_mgenre_output(output),
                 gold_output_qids,
             ):
-                is_correct = False
                 total_number_of_examples += 1
                 if output_result[0]["id"] == gold_output:
                     is_correct = True
                     number_of_correctly_predicted_examples += 1
+                else:
+                    is_correct = False
                 json_to_write = {
                     "mention_id": mention_id,
                     "input_sentence": input_sentence,
