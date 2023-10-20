@@ -22,7 +22,7 @@ from config import (
     MGENRE_KNOWLEDGE_BASE_PATH,
     MGENRE_MARISA_TRIE_PATH,
     MGENRE_MODEL_PATH,
-    SPACY_TRAIN_SET_PATH,
+    SPACY_TEST_SET_PATH,
 )
 from damuel.process_entity_linking_data import (
     extract_single_mention_mgenre_format,
@@ -70,20 +70,57 @@ def inference_with_mgenre(
                       {option 2},...
                      ], Results for sentence 2, ...
                     ]
+                    
+    Raises:
+        KeyError: If model.sample raises KeyError.
+            This has happened in our experience when the prefix trie contains <unk> tokens which are not found in the knowledge base,
+            which happens when the model's tokeniser is unable to encode some page titles. 
+            The prefix trie creation code has since been updated to prevent this. However, the error handling code has been left in here. 
     """
     # See examples_mgenre/examples.ipynb for details on how to use mGENRE
-    return model.sample(
-        sentences,
-        prefix_allowed_tokens_fn=lambda batch_id, sent: [
-            e
-            for e in candidate_trie.get(sent.tolist())
-            if e < len(model.task.target_dictionary)
-        ],
-        text_to_id=lambda x: max(
-            knowledge_base[tuple(reversed(x.split(" >> ")))], key=lambda y: int(y[1:])
-        ),
-        marginalize=True,
-    )
+    try:
+        return model.sample(
+            sentences,
+            prefix_allowed_tokens_fn=lambda batch_id, sent: [
+                e
+                for e in candidate_trie.get(sent.tolist())
+                if e < len(model.task.target_dictionary)
+            ],
+            text_to_id=lambda x: max(
+                knowledge_base[tuple(reversed(x.split(" >> ")))],
+                key=lambda y: int(y[1:]),
+            ),
+            marginalize=True,
+        )
+    except KeyError as e:
+        logging.warning("KeyError, isolating first sentence with error.")
+        for sentence in sentences:
+            try:
+                model.sample(
+                    [sentence],
+                    prefix_allowed_tokens_fn=lambda batch_id, sent: [
+                        e
+                        for e in candidate_trie.get(sent.tolist())
+                        if e < len(model.task.target_dictionary)
+                    ],
+                    text_to_id=lambda x: max(
+                        knowledge_base[tuple(reversed(x.split(" >> ")))],
+                        key=lambda y: int(y[1:]),
+                    ),
+                    marginalize=True,
+                )
+            except KeyError:
+                logging.info(f'Sentence with error: {sentence}')
+                print(f'model output for sentence: {model.sample(
+                    [sentence],
+                    prefix_allowed_tokens_fn=lambda batch_id, sent: [
+                        e
+                        for e in candidate_trie.get(sent.tolist())
+                        if e < len(model.task.target_dictionary)
+                    ],
+                )}')
+                break
+        raise e
 
 
 def get_json_serialisable_mgenre_output(
@@ -154,36 +191,31 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset_path",
         type=str,
-        required=True,
         help="Path to DaMuEL dataset",
     )
     parser.add_argument(
-        "--spacy-format_dataset",
+        "--spacy_format_dataset",
         action="store_true",
         help="Whether the dataset is in spacy format",
     )
     parser.add_argument(
         "--model_path",
         type=str,
-        required=True,
         help="Path to mGENRE model",
     )
     parser.add_argument(
         "--knowledge_base_path",
         type=str,
-        required=True,
         help="Path to knowledge base",
     )
     parser.add_argument(
         "--candidate_marisa_trie_path",
         type=str,
-        required=True,
         help="Path to candidate entities Marisa trie",
     )
     parser.add_argument(
         "--output_path",
         type=str,
-        required=True,
         help="Path to output file",
     )
     parser.add_argument(
@@ -193,6 +225,11 @@ if __name__ == "__main__":
         help="Batch size",
     )
     args = parser.parse_args()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=[logging.StreamHandler()],
+    )
     knowledge_base_path = (
         pathlib.Path(args.knowledge_base_path)
         if args.knowledge_base_path
@@ -201,7 +238,7 @@ if __name__ == "__main__":
     if args.dataset_path:
         dataset_path = pathlib.Path(args.dataset_path)
     elif args.spacy_format_dataset:
-        dataset_path = SPACY_TRAIN_SET_PATH
+        dataset_path = SPACY_TEST_SET_PATH
     else:
         dataset_path = ENTITY_LINKING_DATASET_PATH
     model_path = pathlib.Path(args.model_path) if args.model_path else MGENRE_MODEL_PATH
@@ -215,14 +252,17 @@ if __name__ == "__main__":
     else:
         if args.spacy_format_dataset:
             output_path = (
-                SPACY_TRAIN_SET_PATH.parent / "mgenre_output_spacy_dataset.jsonl"
+                SPACY_TEST_SET_PATH.parent / "mgenre_output_spacy_dataset.jsonl"
             )
         else:
             output_path = (
                 ENTITY_LINKING_DATASET_PATH.parent / "mgenre_output_full_dataset.jsonl"
             )
+    logging.info('Loading model')
     model = mGENRE.from_pretrained(model_path).eval()
+    logging.info('Loading knowledge base')
     knowledge_base = load_from_pickle(knowledge_base_path)
+    logging.info('Loading candidate trie')
     candidate_trie = load_from_pickle(candidate_trie_path)
     total_number_of_examples = 0
     number_of_correctly_predicted_examples = 0
@@ -244,10 +284,8 @@ if __name__ == "__main__":
                 share_to_return=args.share_to_return,
             ),
         )
-
+    logging.info('Running model on data')
     with open(output_path, "w") as file:
-        index = 0
-        logging.info("Running evaluation")
         for (
             mention_ids,
             input_sentences,
@@ -280,7 +318,6 @@ if __name__ == "__main__":
                     "is_correct": is_correct,
                 }
                 file.write(json.dumps(json_to_write) + "\n")
-            index += 1
     print(
         f"({number_of_correctly_predicted_examples=}) / ({total_number_of_examples=}) = {number_of_correctly_predicted_examples/total_number_of_examples}"
     )
