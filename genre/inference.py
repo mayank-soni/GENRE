@@ -306,35 +306,33 @@ if __name__ == "__main__":
     total_number_of_examples = 0
     number_of_correctly_predicted_examples = 0
     if args.use_mbert:
-        for index, result in enumerate(extract_single_mention_mbert_format_from_spacy_dataset(SPACY_TEST_SET_PATH)):
-            print(result)
-            if index>5:
-                break
+        data_iterator = batch_generator_for_iterables(
+            args.batch_size,
+            ([sentence_id, text, gold_qids] for sentence_id, texts, gold_qids in extract_single_mention_mbert_format_from_spacy_dataset(dataset_path) for text in texts),
+        )
+    elif args.spacy_format_dataset:
+        data_iterator = batch_generator_for_iterables(
+            args.batch_size,
+            extract_single_mention_mgenre_format_from_spacy_dataset(
+                dataset_path=dataset_path
+            ),
+        )
     else:
-        if args.spacy_format_dataset:
-            data_iterator = batch_generator_for_iterables(
-                args.batch_size,
-                extract_single_mention_mgenre_format_from_spacy_dataset(
-                    dataset_path=dataset_path
-                ),
-            )
-        else:
-            random.seed(36)
-            data_iterator = batch_generator_for_iterables(
-                args.batch_size,
-                extract_single_mention_mgenre_format(
-                    dataset_path=dataset_path,
-                    break_after=None,
-                    min_sentence_length=args.min_sentence_length,
-                    share_to_return=args.share_to_return,
-                ),
-            )
-        logging.info('Running model on data')
-        with open(output_path, "w") as file:
+        random.seed(36)
+        data_iterator = batch_generator_for_iterables(
+            args.batch_size,
+            extract_single_mention_mgenre_format(
+                dataset_path=dataset_path,
+                break_after=None,
+                min_sentence_length=args.min_sentence_length,
+                share_to_return=args.share_to_return,
+            ),
+        )
+    logging.info('Running model on data')
+    with open(output_path, "w") as file:
+        if args.use_mbert:
             for (
-                mention_ids,
-                input_sentences,
-                gold_output_qids,
+                input_sentences
             ) in tqdm(data_iterator):
                 output = inference_with_mgenre(
                     sentences=input_sentences,
@@ -342,27 +340,39 @@ if __name__ == "__main__":
                     knowledge_base=knowledge_base,
                     candidate_trie=candidate_trie,
                 )
-                # Compare the top QID with the gold QID
-                for mention_id, input_sentence, output_result, gold_output in zip(
-                    mention_ids,
-                    input_sentences,
-                    get_json_serialisable_mgenre_output(output),
-                    gold_output_qids,
-                ):
-                    total_number_of_examples += 1
-                    if output_result[0]["id"] == gold_output:
-                        is_correct = True
-                        number_of_correctly_predicted_examples += 1
-                    else:
-                        is_correct = False
-                    json_to_write = {
-                        "mention_id": mention_id,
-                        "input_sentence": input_sentence,
-                        "output_result": output_result,
-                        "gold_output": gold_output,
-                        "is_correct": is_correct,
-                    }
-                    file.write(json.dumps(json_to_write) + "\n")
-        print(
-            f"({number_of_correctly_predicted_examples=}) / ({total_number_of_examples=}) = {number_of_correctly_predicted_examples/total_number_of_examples}"
-        )
+
+        for (
+            mention_ids,
+            input_sentences,
+            gold_output_qids,
+        ) in tqdm(data_iterator):
+            output = inference_with_mgenre(
+                sentences=input_sentences,
+                model=model,
+                knowledge_base=knowledge_base,
+                candidate_trie=candidate_trie,
+            )
+            # Compare the top QID with the gold QID
+            for mention_id, input_sentence, output_result, gold_output in zip(
+                mention_ids,
+                input_sentences,
+                get_json_serialisable_mgenre_output(output),
+                gold_output_qids,
+            ):
+                total_number_of_examples += 1
+                if output_result[0]["id"] == gold_output:
+                    is_correct = True
+                    number_of_correctly_predicted_examples += 1
+                else:
+                    is_correct = False
+                json_to_write = {
+                    "mention_id": mention_id,
+                    "input_sentence": input_sentence,
+                    "output_result": output_result,
+                    "gold_output": gold_output,
+                    "is_correct": is_correct,
+                }
+                file.write(json.dumps(json_to_write) + "\n")
+    print(
+        f"({number_of_correctly_predicted_examples=}) / ({total_number_of_examples=}) = {number_of_correctly_predicted_examples/total_number_of_examples}"
+    )
