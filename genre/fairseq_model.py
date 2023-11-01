@@ -11,7 +11,7 @@ from typing import List, Dict
 import torch
 from fairseq.models.bart import BARTHubInterface, BARTModel
 
-from genre.utils import post_process_wikidata
+from GENRE.genre.utils import post_process_wikidata
 
 logger = logging.getLogger(__name__)
 

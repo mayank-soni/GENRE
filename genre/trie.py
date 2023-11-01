@@ -104,7 +104,6 @@ class MarisaTrie(object):
         cache_fist_branch=True,
         max_token_id=256001,
     ):
-
         self.int2char = [chr(i) for i in range(min(max_token_id, 55000))] + (
             [chr(i) for i in range(65000, max_token_id + 10000)]
             if max_token_id >= 55000

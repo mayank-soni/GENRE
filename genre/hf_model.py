@@ -15,7 +15,7 @@ from transformers import (
     MBartForConditionalGeneration,
 )
 
-from genre.utils import chunk_it, post_process_wikidata
+from GENRE.genre.utils import chunk_it, post_process_wikidata
 
 logger = logging.getLogger(__name__)
 

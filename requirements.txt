@@ -1,7 +1,6 @@
-unidecode
-requests
-kilt
-fairseq
-transformers
-bs4
-marisa_trie
+beautifulsoup4==4.12.2
+fairseq==0.12.2
+marisa_trie==1.1.0
+sentencepiece==0.1.99
+torch==2.1.0
+
