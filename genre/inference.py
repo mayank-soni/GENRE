@@ -15,6 +15,7 @@ import random
 from tqdm import tqdm
 
 # Custom
+from assessment.entity_linking import evaluate_entity_linking
 from config import (
     ENTITY_LINKING_DATASET_PATH,
     MBERT_OUTPUT_PATH,
@@ -27,6 +28,7 @@ from damuel.process_entity_linking_data import (
     extract_single_mention_mgenre_format,
     extract_single_mention_mgenre_format_from_spacy_dataset,
     get_mbert_format_dataset_from_spacy_dataset,
+    get_iterator_over_texts_from_mbert_dataset,
 )
 from damuel.utils import (
     batch_generator_for_iterables,
@@ -157,6 +159,44 @@ def get_top_qids(mgenre_output: list[list[dict]]) -> list[str]:
         list[str]: List of top QIDs for each sentence.
     """
     return [sentence[0]["id"] for sentence in mgenre_output]
+
+
+def collate_qids_by_sentence(qids: list[str], input_mbert_dataset: pathlib.Path):
+    output_prodigy_spans = []
+    qid_index = 0
+    with open(input_mbert_dataset, "r") as file:
+        for line in file:
+            json_obj = json.loads(line)
+            sentence_spans = []
+            for mention in json_obj["mentions"]:
+                sentence_spans.append(
+                    {
+                        "label": qids[qid_index],
+                        "start": mention["start"],
+                        "end": mention["end"],
+                    }
+                )
+                qid_index += 1
+            output_prodigy_spans.append(sentence_spans)
+    return output_prodigy_spans
+
+
+def get_gold_qids_mbert_dataset(dataset_path: pathlib.Path):
+    gold_qids = []
+    with open(dataset_path, "r") as file:
+        for line in file:
+            json_obj = json.loads(line)
+            sentence_qids = []
+            for mention in json_obj["gold_mentions"]:
+                sentence_qids.append(
+                    {
+                        "label": mention["qid"],
+                        "start": mention["start_character"],
+                        "end": mention["end_character"],
+                    }
+                )
+            gold_qids.append(sentence_qids)
+    return gold_qids
 
 
 ###########
@@ -308,66 +348,95 @@ if __name__ == "__main__":
     if args.use_mbert:
         logging.info("Running mBERT")
         get_mbert_format_dataset_from_spacy_dataset(dataset_path, MBERT_OUTPUT_PATH)
-    # elif args.spacy_format_dataset:
-    #     data_iterator = batch_generator_for_iterables(
-    #         args.batch_size,
-    #         extract_single_mention_mgenre_format_from_spacy_dataset(
-    #             dataset_path=dataset_path
-    #         ),
-    #     )
-    # else:
-    #     random.seed(36)
-    #     data_iterator = batch_generator_for_iterables(
-    #         args.batch_size,
-    #         extract_single_mention_mgenre_format(
-    #             dataset_path=dataset_path,
-    #             break_after=None,
-    #             min_sentence_length=args.min_sentence_length,
-    #             share_to_return=args.share_to_return,
-    #         ),
-    #     )
-    # logging.info("Running model on data")
-    # with open(output_path, "w") as file:
-    #     if args.use_mbert:
-    #         for input_sentences in tqdm(data_iterator):
-    #             output = inference_with_mgenre(
-    #                 sentences=input_sentences,
-    #                 model=model,
-    #                 knowledge_base=knowledge_base,
-    #                 candidate_trie=candidate_trie,
-    #             )
-    #     for (
-    #         mention_ids,
-    #         input_sentences,
-    #         gold_output_qids,
-    #     ) in tqdm(data_iterator):
-    #         output = inference_with_mgenre(
-    #             sentences=input_sentences,
-    #             model=model,
-    #             knowledge_base=knowledge_base,
-    #             candidate_trie=candidate_trie,
-    #         )
-    #         # Compare the top QID with the gold QID
-    #         for mention_id, input_sentence, output_result, gold_output in zip(
-    #             mention_ids,
-    #             input_sentences,
-    #             get_json_serialisable_mgenre_output(output),
-    #             gold_output_qids,
-    #         ):
-    #             total_number_of_examples += 1
-    #             if output_result[0]["id"] == gold_output:
-    #                 is_correct = True
-    #                 number_of_correctly_predicted_examples += 1
-    #             else:
-    #                 is_correct = False
-    #             json_to_write = {
-    #                 "mention_id": mention_id,
-    #                 "input_sentence": input_sentence,
-    #                 "output_result": output_result,
-    #                 "gold_output": gold_output,
-    #                 "is_correct": is_correct,
-    #             }
-    #             file.write(json.dumps(json_to_write) + "\n")
-    # print(
-    #     f"({number_of_correctly_predicted_examples=}) / ({total_number_of_examples=}) = {number_of_correctly_predicted_examples/total_number_of_examples}"
-    # )
+        data_iterator = batch_generator_for_iterables(
+            args.batch_size,
+            get_iterator_over_texts_from_mbert_dataset(MBERT_OUTPUT_PATH),
+        )
+    elif args.spacy_format_dataset:
+        data_iterator = batch_generator_for_iterables(
+            args.batch_size,
+            extract_single_mention_mgenre_format_from_spacy_dataset(
+                dataset_path=dataset_path
+            ),
+        )
+    else:
+        random.seed(36)
+        data_iterator = batch_generator_for_iterables(
+            args.batch_size,
+            extract_single_mention_mgenre_format(
+                dataset_path=dataset_path,
+                break_after=None,
+                min_sentence_length=args.min_sentence_length,
+                share_to_return=args.share_to_return,
+            ),
+        )
+    logging.info("Running model on data")
+    with open(output_path, "w") as file:
+        if args.use_mbert:
+            predicted_qids = []
+            for input_sentences in tqdm(data_iterator):
+                output = inference_with_mgenre(
+                    sentences=input_sentences,
+                    model=model,
+                    knowledge_base=knowledge_base,
+                    candidate_trie=candidate_trie,
+                )
+                predicted_qids += get_top_qids(output)
+                predicted_qids_by_sentence = collate_qids_by_sentence(
+                    predicted_qids, MBERT_OUTPUT_PATH
+                )
+                gold_qids_by_sentence = get_gold_qids_mbert_dataset(MBERT_OUTPUT_PATH)
+                set_of_qids = set(
+                    (
+                        mention["label"]
+                        for sentence in gold_qids_by_sentence
+                        for mention in sentence
+                    )
+                ) | set(
+                    (
+                        mention["label"]
+                        for sentence in predicted_qids_by_sentence
+                        for mention in sentence
+                    )
+                )
+                score = evaluate_entity_linking(
+                    labels=gold_qids_by_sentence,
+                    predictions=predicted_qids_by_sentence,
+                    set_of_qids=set_of_qids,
+                )
+        else:
+            for (
+                mention_ids,
+                input_sentences,
+                gold_output_qids,
+            ) in tqdm(data_iterator):
+                output = inference_with_mgenre(
+                    sentences=input_sentences,
+                    model=model,
+                    knowledge_base=knowledge_base,
+                    candidate_trie=candidate_trie,
+                )
+                # Compare the top QID with the gold QID
+                for mention_id, input_sentence, output_result, gold_output in zip(
+                    mention_ids,
+                    input_sentences,
+                    get_json_serialisable_mgenre_output(output),
+                    gold_output_qids,
+                ):
+                    total_number_of_examples += 1
+                    if output_result[0]["id"] == gold_output:
+                        is_correct = True
+                        number_of_correctly_predicted_examples += 1
+                    else:
+                        is_correct = False
+                    json_to_write = {
+                        "mention_id": mention_id,
+                        "input_sentence": input_sentence,
+                        "output_result": output_result,
+                        "gold_output": gold_output,
+                        "is_correct": is_correct,
+                    }
+                    file.write(json.dumps(json_to_write) + "\n")
+            print(
+                f"({number_of_correctly_predicted_examples=}) / ({total_number_of_examples=}) = {number_of_correctly_predicted_examples/total_number_of_examples}"
+            )
