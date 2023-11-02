@@ -267,6 +267,11 @@ if __name__ == "__main__":
         help="Whether to do mention detection using mBERT or use the DaMuEL dataset directly with mGENRE",
     )
     parser.add_argument(
+        "--redo_mbert",
+        action="store_true",
+        help="Whether to re-do the mBERT entity detection",
+    )
+    parser.add_argument(
         "--model_path",
         type=str,
         help="Path to mGENRE model",
@@ -346,8 +351,9 @@ if __name__ == "__main__":
     total_number_of_examples = 0
     number_of_correctly_predicted_examples = 0
     if args.use_mbert:
-        logging.info("Running mBERT")
-        get_mbert_format_dataset_from_spacy_dataset(dataset_path, MBERT_OUTPUT_PATH)
+        if args.redo_mbert:
+            logging.info("Running mBERT")
+            get_mbert_format_dataset_from_spacy_dataset(dataset_path, MBERT_OUTPUT_PATH)
         data_iterator = batch_generator_for_iterables(
             args.batch_size,
             get_iterator_over_texts_from_mbert_dataset(MBERT_OUTPUT_PATH),
@@ -374,36 +380,38 @@ if __name__ == "__main__":
     with open(output_path, "w") as file:
         if args.use_mbert:
             predicted_qids = []
-            for input_sentences in tqdm(data_iterator):
+            for input_list in tqdm(data_iterator):
                 output = inference_with_mgenre(
-                    sentences=input_sentences,
+                    sentences=input_list[0],
                     model=model,
                     knowledge_base=knowledge_base,
                     candidate_trie=candidate_trie,
                 )
                 predicted_qids += get_top_qids(output)
-                predicted_qids_by_sentence = collate_qids_by_sentence(
-                    predicted_qids, MBERT_OUTPUT_PATH
+            logging.info('Collating results')
+            predicted_qids_by_sentence = collate_qids_by_sentence(
+                predicted_qids, MBERT_OUTPUT_PATH
+            )
+            gold_qids_by_sentence = get_gold_qids_mbert_dataset(MBERT_OUTPUT_PATH)
+            set_of_qids = set(
+                (
+                    mention["label"]
+                    for sentence in gold_qids_by_sentence
+                    for mention in sentence
                 )
-                gold_qids_by_sentence = get_gold_qids_mbert_dataset(MBERT_OUTPUT_PATH)
-                set_of_qids = set(
-                    (
-                        mention["label"]
-                        for sentence in gold_qids_by_sentence
-                        for mention in sentence
-                    )
-                ) | set(
-                    (
-                        mention["label"]
-                        for sentence in predicted_qids_by_sentence
-                        for mention in sentence
-                    )
+            ) | set(
+                (
+                    mention["label"]
+                    for sentence in predicted_qids_by_sentence
+                    for mention in sentence
                 )
-                score = evaluate_entity_linking(
-                    labels=gold_qids_by_sentence,
-                    predictions=predicted_qids_by_sentence,
-                    set_of_qids=set_of_qids,
-                )
+            )
+            score = evaluate_entity_linking(
+                labels=gold_qids_by_sentence,
+                predictions=predicted_qids_by_sentence,
+                set_of_qids=set_of_qids,
+            )
+            print(score)
         else:
             for (
                 mention_ids,
