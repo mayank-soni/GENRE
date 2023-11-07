@@ -27,8 +27,8 @@ from config import (
 from damuel.process_entity_linking_data import (
     extract_single_mention_mgenre_format,
     extract_single_mention_mgenre_format_from_spacy_dataset,
-    get_mbert_format_dataset_from_spacy_dataset,
-    get_iterator_over_texts_from_mbert_dataset,
+    get_mbert_output_from_spacy_dataset,
+    get_iterator_over_texts_from_mbert_output,
 )
 from damuel.utils import (
     batch_generator_for_iterables,
@@ -161,7 +161,20 @@ def get_top_qids(mgenre_output: list[list[dict]]) -> list[str]:
     return [sentence[0]["id"] for sentence in mgenre_output]
 
 
-def collate_qids_by_sentence(qids: list[str], input_mbert_dataset: pathlib.Path):
+def collate_qids_by_sentence(qids: list[str], input_mbert_dataset: pathlib.Path) -> list[list[dict[str, str | int]]]:
+    """Takes a list of the top qid for every mention in the mBERT output, and breaks it into per-sentence lists of Prodigy-formatted mentions. 
+    This can be used with evaluate_entity_linking().
+    Does this by taking the number of mentions per sentence and the position of each mention from the mBERT dataset.
+    
+    Args:
+        qids (list[str]): List of the top qid for each mention in the mBERT output
+        input_mbert_dataset (pathlib.Path): Path to input mBERT dataset
+        
+    Output:
+        list[list[dict[str, str | int]]]: Prodigy-style span labels for each sentence.
+            See https://pypi.org/project/nervaluate/ for more details on the Prodigy-style format required.
+    
+    """
     output_prodigy_spans = []
     qid_index = 0
     with open(input_mbert_dataset, "r") as file:
@@ -181,7 +194,17 @@ def collate_qids_by_sentence(qids: list[str], input_mbert_dataset: pathlib.Path)
     return output_prodigy_spans
 
 
-def get_gold_qids_mbert_dataset(dataset_path: pathlib.Path):
+def get_gold_qids_mbert_dataset(dataset_path: pathlib.Path) -> list[list[dict[str, str | int]]]:
+    """Extracts the gold QIDs from the DaMuEL database (in the format stored in the mBERT output dataset) as a Prodigy-style list.
+    This can be used as the reference labels in evaluate_entity_linking().
+    
+    Args:
+        dataset_path (pathlib.Path): Path to mBERT output dataset. 
+    
+    Returns:
+        list[list[dict[str, str | int]]]: Prodigy-style gold span labels for each sentence.
+            See https://pypi.org/project/nervaluate/ for more details on the Prodigy-style format required.
+    """ 
     gold_qids = []
     with open(dataset_path, "r") as file:
         for line in file:
@@ -249,7 +272,7 @@ def get_gold_qids_mbert_dataset(dataset_path: pathlib.Path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Runs DaMuEL dataset through mGENRE. Saves the output to a file. Calculates top-1 accuracy."
+        description="Runs DaMuEL dataset through mBERT and mGENRE. Saves the output to a file. Calculates top-1 accuracy."
     )
     parser.add_argument(
         "--dataset_path",
@@ -267,9 +290,9 @@ if __name__ == "__main__":
         help="Whether to do mention detection using mBERT or use the DaMuEL dataset directly with mGENRE",
     )
     parser.add_argument(
-        "--redo_mbert",
+        "--do_mbert",
         action="store_true",
-        help="Whether to re-do the mBERT entity detection",
+        help="Whether to do the mBERT entity detection",
     )
     parser.add_argument(
         "--model_path",
@@ -297,6 +320,7 @@ if __name__ == "__main__":
         required=True,
         help="Batch size",
     )
+    parser.add_argument("--logfile_path", type = str, required=True)
     full_el_args = parser.add_argument_group("Full entity linking dataset arguments")
     full_el_args.add_argument(
         "--min_sentence_length",
@@ -309,10 +333,12 @@ if __name__ == "__main__":
         type=float,
     )
     args = parser.parse_args()
+    logfile_path = pathlib.Path(args.logfile_path)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        handlers=[logging.StreamHandler()],
+        handlers=[logging.FileHandler(logfile_path),
+                  logging.StreamHandler()],
     )
     knowledge_base_path = (
         pathlib.Path(args.knowledge_base_path)
@@ -334,7 +360,11 @@ if __name__ == "__main__":
     if args.output_path:
         output_path = pathlib.Path(args.output_path)
     else:
-        if args.spacy_format_dataset:
+        if args.use_mbert:
+            output_path = (
+                SPACY_TEST_SET_PATH.parent / "mbert_mgenre_output_spacy_dataset.jsonl"
+            )
+        elif args.spacy_format_dataset:
             output_path = (
                 SPACY_TEST_SET_PATH.parent / "mgenre_output_spacy_dataset.jsonl"
             )
@@ -348,15 +378,13 @@ if __name__ == "__main__":
     knowledge_base = load_from_pickle(knowledge_base_path)
     logging.info("Loading candidate trie")
     candidate_trie = load_from_pickle(candidate_trie_path)
-    total_number_of_examples = 0
-    number_of_correctly_predicted_examples = 0
     if args.use_mbert:
-        if args.redo_mbert:
+        if args.do_mbert:
             logging.info("Running mBERT")
-            get_mbert_format_dataset_from_spacy_dataset(dataset_path, MBERT_OUTPUT_PATH)
+            get_mbert_output_from_spacy_dataset(dataset_path, MBERT_OUTPUT_PATH)
         data_iterator = batch_generator_for_iterables(
             args.batch_size,
-            get_iterator_over_texts_from_mbert_dataset(MBERT_OUTPUT_PATH),
+            get_iterator_over_texts_from_mbert_output(MBERT_OUTPUT_PATH),
         )
     elif args.spacy_format_dataset:
         data_iterator = batch_generator_for_iterables(
@@ -366,6 +394,8 @@ if __name__ == "__main__":
             ),
         )
     else:
+        total_number_of_examples = 0
+        number_of_correctly_predicted_examples = 0
         random.seed(36)
         data_iterator = batch_generator_for_iterables(
             args.batch_size,
@@ -406,12 +436,22 @@ if __name__ == "__main__":
                     for mention in sentence
                 )
             )
-            score = evaluate_entity_linking(
+            with MBERT_OUTPUT_PATH.open('r') as mbertfile:
+                for i, line in enumerate(mbertfile): 
+                    text_id = json.loads(line)['id']
+                    predicted_qids = predicted_qids_by_sentence[i]
+                    gold_qids = gold_qids_by_sentence[i]
+                    json_to_write = {'text_id': text_id, "predicted_qids": predicted_qids, "gold_qids": gold_qids}
+                    file.write(json.dumps(json_to_write) + "\n")
+            logging.info('Calculating scores')
+            end_to_end_results, chunking_results, linking_results = evaluate_entity_linking(
                 labels=gold_qids_by_sentence,
                 predictions=predicted_qids_by_sentence,
                 set_of_qids=set_of_qids,
             )
-            print(score)
+            score = {'end_to_end': end_to_end_results, 'chunking': chunking_results, 'linking': linking_results}
+            file.write(json.dumps(score))
+            logging.info(score)
         else:
             for (
                 mention_ids,
@@ -445,6 +485,6 @@ if __name__ == "__main__":
                         "is_correct": is_correct,
                     }
                     file.write(json.dumps(json_to_write) + "\n")
-            print(
+            logging.info(
                 f"({number_of_correctly_predicted_examples=}) / ({total_number_of_examples=}) = {number_of_correctly_predicted_examples/total_number_of_examples}"
             )
