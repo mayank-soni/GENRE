@@ -161,19 +161,21 @@ def get_top_qids(mgenre_output: list[list[dict]]) -> list[str]:
     return [sentence[0]["id"] for sentence in mgenre_output]
 
 
-def collate_qids_by_sentence(qids: list[str], input_mbert_dataset: pathlib.Path) -> list[list[dict[str, str | int]]]:
-    """Takes a list of the top qid for every mention in the mBERT output, and breaks it into per-sentence lists of Prodigy-formatted mentions. 
+def collate_qids_by_sentence(
+    qids: list[str], input_mbert_dataset: pathlib.Path
+) -> list[list[dict[str, str | int]]]:
+    """Takes a list of the top qid for every mention in the mBERT output, and breaks it into per-sentence lists of Prodigy-formatted mentions.
     This can be used with evaluate_entity_linking().
     Does this by taking the number of mentions per sentence and the position of each mention from the mBERT dataset.
-    
+
     Args:
         qids (list[str]): List of the top qid for each mention in the mBERT output
         input_mbert_dataset (pathlib.Path): Path to input mBERT dataset
-        
+
     Output:
         list[list[dict[str, str | int]]]: Prodigy-style span labels for each sentence.
             See https://pypi.org/project/nervaluate/ for more details on the Prodigy-style format required.
-    
+
     """
     output_prodigy_spans = []
     qid_index = 0
@@ -194,17 +196,19 @@ def collate_qids_by_sentence(qids: list[str], input_mbert_dataset: pathlib.Path)
     return output_prodigy_spans
 
 
-def get_gold_qids_mbert_dataset(dataset_path: pathlib.Path) -> list[list[dict[str, str | int]]]:
+def get_gold_qids_mbert_dataset(
+    dataset_path: pathlib.Path,
+) -> list[list[dict[str, str | int]]]:
     """Extracts the gold QIDs from the DaMuEL database (in the format stored in the mBERT output dataset) as a Prodigy-style list.
     This can be used as the reference labels in evaluate_entity_linking().
-    
+
     Args:
-        dataset_path (pathlib.Path): Path to mBERT output dataset. 
-    
+        dataset_path (pathlib.Path): Path to mBERT output dataset.
+
     Returns:
         list[list[dict[str, str | int]]]: Prodigy-style gold span labels for each sentence.
             See https://pypi.org/project/nervaluate/ for more details on the Prodigy-style format required.
-    """ 
+    """
     gold_qids = []
     with open(dataset_path, "r") as file:
         for line in file:
@@ -320,7 +324,7 @@ if __name__ == "__main__":
         required=True,
         help="Batch size",
     )
-    parser.add_argument("--logfile_path", type = str, required=True)
+    parser.add_argument("--logfile_path", type=str, required=True)
     full_el_args = parser.add_argument_group("Full entity linking dataset arguments")
     full_el_args.add_argument(
         "--min_sentence_length",
@@ -337,8 +341,7 @@ if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        handlers=[logging.FileHandler(logfile_path),
-                  logging.StreamHandler()],
+        handlers=[logging.FileHandler(logfile_path), logging.StreamHandler()],
     )
     knowledge_base_path = (
         pathlib.Path(args.knowledge_base_path)
@@ -418,7 +421,7 @@ if __name__ == "__main__":
                     candidate_trie=candidate_trie,
                 )
                 predicted_qids += get_top_qids(output)
-            logging.info('Collating results')
+            logging.info("Collating results")
             predicted_qids_by_sentence = collate_qids_by_sentence(
                 predicted_qids, MBERT_OUTPUT_PATH
             )
@@ -436,20 +439,32 @@ if __name__ == "__main__":
                     for mention in sentence
                 )
             )
-            with MBERT_OUTPUT_PATH.open('r') as mbertfile:
-                for i, line in enumerate(mbertfile): 
-                    text_id = json.loads(line)['id']
+            with MBERT_OUTPUT_PATH.open("r") as mbertfile:
+                for i, line in enumerate(mbertfile):
+                    text_id = json.loads(line)["id"]
                     predicted_qids = predicted_qids_by_sentence[i]
                     gold_qids = gold_qids_by_sentence[i]
-                    json_to_write = {'text_id': text_id, "predicted_qids": predicted_qids, "gold_qids": gold_qids}
+                    json_to_write = {
+                        "text_id": text_id,
+                        "predicted_qids": predicted_qids,
+                        "gold_qids": gold_qids,
+                    }
                     file.write(json.dumps(json_to_write) + "\n")
-            logging.info('Calculating scores')
-            end_to_end_results, chunking_results, linking_results = evaluate_entity_linking(
+            logging.info("Calculating scores")
+            (
+                end_to_end_results,
+                chunking_results,
+                linking_results,
+            ) = evaluate_entity_linking(
                 labels=gold_qids_by_sentence,
                 predictions=predicted_qids_by_sentence,
                 set_of_qids=set_of_qids,
             )
-            score = {'end_to_end': end_to_end_results, 'chunking': chunking_results, 'linking': linking_results}
+            score = {
+                "end_to_end": end_to_end_results,
+                "chunking": chunking_results,
+                "linking": linking_results,
+            }
             file.write(json.dumps(score))
             logging.info(score)
         else:
