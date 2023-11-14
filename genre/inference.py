@@ -442,11 +442,11 @@ if __name__ == "__main__":
             with MBERT_OUTPUT_PATH.open("r") as mbertfile:
                 for i, line in enumerate(mbertfile):
                     text_id = json.loads(line)["id"]
-                    predicted_qids = predicted_qids_by_sentence[i]
+                    predicted_qids_for_sentence = predicted_qids_by_sentence[i]
                     gold_qids = gold_qids_by_sentence[i]
                     json_to_write = {
                         "text_id": text_id,
-                        "predicted_qids": predicted_qids,
+                        "predicted_qids": predicted_qids_for_sentence,
                         "gold_qids": gold_qids,
                     }
                     file.write(json.dumps(json_to_write) + "\n")
